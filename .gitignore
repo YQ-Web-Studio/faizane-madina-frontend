@@ -31,3 +31,5 @@ build/
 .cache/
 
 ecosystem.config.js
+playwright-report/
+test-results/

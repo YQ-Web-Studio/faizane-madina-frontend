@@ -1,12 +1,16 @@
-## Summary
-- **Jira Issue:** [FMMS-XX](https://yqwebstudio.atlassian.net/browse/FMMS-XX)
-- **Component:** Frontend (React 19 / Vite / GitHub Pages)
-
-## Changes Proposed
+﻿## Summary
+<!-- Concise bullet points on what was changed and why -->
 - 
 
-## Verification & Testing
-- [ ] ESLint passed (`npm run lint`)
-- [ ] Unit tests passed (`npm test`)
-- [ ] Playwright E2E passed (`npm run test:e2e`)
-- [ ] Production build passed (`npm run build`)
+## Linked Jira Ticket
+- Jira: [TICKET-KEY](https://yqwebstudio.atlassian.net/browse/TICKET-KEY)
+
+## Visual Evidence
+<!-- Targeted visual proof showcasing the fix or new feature (or 'N/A') -->
+| Change Demonstrated | Preview |
+| :--- | :--- |
+| <!-- e.g. Coupon discount applied correctly at checkout --> | <!-- image / video link --> |
+
+## Test Verification
+- [x] Unit / Integration Tests: `passed`
+- [x] E2E / Smoke Tests: `passed`

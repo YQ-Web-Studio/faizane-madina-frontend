@@ -58,12 +58,12 @@ function App() {
 
         {/* LAZY ZONE: Loaded in background */}
         <Suspense fallback={<SectionLoader />}>
-          <section id="services" className="section">
-            <Services />
-          </section>
-
           <section id="announcements" className="section">
             <Announcements />
+          </section>
+
+          <section id="services" className="section">
+            <Services />
           </section>
 
           <section id="donate" className="section">

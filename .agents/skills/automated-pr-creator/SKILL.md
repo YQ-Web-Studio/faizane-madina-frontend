@@ -14,7 +14,7 @@ This skill automates the creation of high-signal, bloat-free Pull Requests acros
 1. **The Mandatory PR Skill Hard-Gate**: Manual, blank, or partially filled PR templates are strictly forbidden.
 2. **Zero Bloat / Ultra-Lean Standard**: 100% pre-filled template with real bullets, Jira link, visual proof, and test metrics.
 3. **Change-Focused Visual Evidence**: Targeted Playwright screenshots demonstrating the fix or new feature in action (or `N/A` for backend/logic changes).
-4. **Gate 3 Human Confirmation**: Previews the complete PR payload to Yusuf Qureshi before opening.
+4. **Gate 3 Human Confirmation**: Previews the complete PR payload to the developer before opening.
 
 ---
 
@@ -83,7 +83,7 @@ Construct the markdown body using the Ultra-Lean format:
 ---
 
 ### Step 5: Gate 3 Human Review & Confirmation
-Before running `gh pr create`, present the complete payload to Yusuf Qureshi:
+Before running `gh pr create`, present the complete payload to the developer:
 
 ```markdown
 ### Pull Request Payload Ready for Review:

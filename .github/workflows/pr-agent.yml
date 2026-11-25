@@ -29,6 +29,8 @@ jobs:
         id: rebase_guard
         if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.base_ref }}
           BEFORE_SHA: ${{ github.event.before }}
         run: |
@@ -39,12 +41,19 @@ jobs:
           if git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
             OLD_BASE=$(git merge-base "origin/${BASE_REF}" "${BEFORE_SHA}" 2>/dev/null || echo "")
             if [ -n "$OLD_BASE" ]; then
-              OLD_PATCH_ID=$(git diff "${OLD_BASE}...${BEFORE_SHA}" | git patch-id --stable | awk '{print $1}')
-              NEW_PATCH_ID=$(git diff "origin/${BASE_REF}...HEAD" | git patch-id --stable | awk '{print $1}')
-              if [ -n "$OLD_PATCH_ID" ] && [ "$OLD_PATCH_ID" = "$NEW_PATCH_ID" ]; then
-                echo "Pure rebase detected (identical PR diff against origin/${BASE_REF}; patch-id=${NEW_PATCH_ID}). Skipping duplicate PR-Agent review."
-                echo "skip=true" >> "$GITHUB_OUTPUT"
-                exit 0
+              OLD_DIFF_HASH=$(git diff -U0 "${OLD_BASE}...${BEFORE_SHA}" | grep -vE '^(index |@@ )' | sha256sum | awk '{print $1}')
+              NEW_DIFF_HASH=$(git diff -U0 "origin/${BASE_REF}...HEAD" | grep -vE '^(index |@@ )' | sha256sum | awk '{print $1}')
+              if [ -n "$OLD_DIFF_HASH" ] && [ "$OLD_DIFF_HASH" = "$NEW_DIFF_HASH" ]; then
+                # Only skip if a completed PR-Agent review already exists on this PR
+                EXISTING_REVIEW_ID=$(gh api --paginate "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+                  --jq '.[] | select(.user.login == "github-actions[bot]" and ((.body | contains("pr-agent-review-state")) or (.body | contains("<!-- pr-agent:review:full -->")) or (.body | contains("PR Reviewer Guide")))) | .id' \
+                  | tail -n 1 || echo "")
+                if [ -n "$EXISTING_REVIEW_ID" ]; then
+                  echo "Pure rebase detected (identical whitespace-preserving PR diff against origin/${BASE_REF}; hash=${NEW_DIFF_HASH}) with existing review comment #${EXISTING_REVIEW_ID}. Skipping duplicate PR-Agent review."
+                  echo "skip=true" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+                echo "Pure rebase detected, but no completed PR-Agent review comment exists yet. Running review."
               fi
             fi
           fi

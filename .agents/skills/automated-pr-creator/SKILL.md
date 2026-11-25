@@ -22,14 +22,22 @@ This skill automates the creation of high-signal, bloat-free Pull Requests acros
 
 Whenever you complete a task or are instructed to create, open, or draft a Pull Request, execute these steps in order:
 
-### Step 1: Detect Branch & Resolve Jira Context
-1. Check current branch:
+### Step 1: Verify Branch Hygiene & Resolve Jira Context
+1. **Mandatory Branch-Off-Main Rule (NEVER branch off another feature branch by default):**
+   - Whenever creating a new branch, ALWAYS start from an up-to-date `origin/main`:
+     ```bash
+     git fetch origin main && git checkout -b <type>/<TICKET>-<slug> origin/main
+     ```
+   - NEVER run `git checkout -b <new-branch>` while checked out on another feature branch unless the user explicitly requests a stacked PR.
+2. Check current branch and verify it only contains commits for this ticket:
    ```bash
    git branch --show-current
+   git fetch origin main && git log origin/main..HEAD --oneline
    ```
-2. Extract the Jira ticket key matching `[A-Z]+-[0-9]+` (e.g. `DQP-14`, `MA-3`, `FMMS-1`, `YQWS-2`).
-3. If no ticket key is found in the branch name, prompt the user for the ticket key before proceeding.
-4. Retrieve the ticket's summary and acceptance criteria via Atlassian MCP (`getJiraIssue`) to ensure the PR description reflects the ticket's business intent.
+   - **Stacked-Branch Guard:** If `git log origin/main..HEAD --oneline` includes commits belonging to another ticket or another developer's unmerged branch, **HALT IMMEDIATELY** and rebase only this branch's commits onto `origin/main` (`git rebase --onto origin/main <parent-branch> <current-branch>`) before proceeding.
+3. Extract the Jira ticket key matching `[A-Z]+-[0-9]+` (e.g. `DQP-14`, `MA-3`, `FMMS-1`, `YQWS-2`).
+4. If no ticket key is found in the branch name, prompt the user for the ticket key before proceeding.
+5. Retrieve the ticket's summary and acceptance criteria via Atlassian MCP (`getJiraIssue`) to ensure the PR description reflects the ticket's business intent.
 
 ---
 

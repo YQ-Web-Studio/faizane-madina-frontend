@@ -1,9 +1,13 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Services & Gallery', () => {
-  test('renders services or community gallery elements', async ({ page }) => {
+  test('renders services and community gallery sections', async ({ page }) => {
     await page.goto('/');
-    const content = page.locator('main, section').first();
-    await expect(content).toBeVisible();
+
+    const servicesSection = page.locator('section#services');
+    await expect(servicesSection).toBeVisible();
+
+    const gallerySection = page.locator('section#gallery');
+    await expect(gallerySection).toBeVisible();
   });
 });

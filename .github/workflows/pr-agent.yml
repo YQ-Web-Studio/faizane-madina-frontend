@@ -7,7 +7,7 @@ on:
     types: [created]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -18,7 +18,50 @@ jobs:
       pull-requests: write
       contents: read
     steps:
+      - name: Checkout for Pure-Rebase Guard
+        if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Pure-Rebase Guard
+        id: rebase_guard
+        if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${BASE_REF}" 2>/dev/null || true
+          git fetch --no-tags origin "${BEFORE_SHA}" 2>/dev/null || true
+
+          if git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            OLD_BASE=$(git merge-base "origin/${BASE_REF}" "${BEFORE_SHA}" 2>/dev/null || echo "")
+            if [ -n "$OLD_BASE" ]; then
+              OLD_DIFF_HASH=$(git diff -U0 "${OLD_BASE}...${BEFORE_SHA}" | grep -vE '^(index |@@ )' | sha256sum | awk '{print $1}')
+              NEW_DIFF_HASH=$(git diff -U0 "origin/${BASE_REF}...HEAD" | grep -vE '^(index |@@ )' | sha256sum | awk '{print $1}')
+              if [ -n "$OLD_DIFF_HASH" ] && [ "$OLD_DIFF_HASH" = "$NEW_DIFF_HASH" ]; then
+                # Only skip if a completed PR-Agent review already exists on this PR
+                EXISTING_REVIEW_ID=$(gh api --paginate "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+                  --jq '.[] | select(.user.login == "github-actions[bot]" and ((.body | contains("pr-agent-review-state")) or (.body | contains("<!-- pr-agent:review:full -->")) or (.body | contains("PR Reviewer Guide")))) | .id' \
+                  | tail -n 1 || echo "")
+                if [ -n "$EXISTING_REVIEW_ID" ]; then
+                  echo "Pure rebase detected (identical whitespace-preserving PR diff against origin/${BASE_REF}; hash=${NEW_DIFF_HASH}) with existing review comment #${EXISTING_REVIEW_ID}. Skipping duplicate PR-Agent review."
+                  echo "skip=true" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+                echo "Pure rebase detected, but no completed PR-Agent review comment exists yet. Running review."
+              fi
+            fi
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
       - name: PR Agent Action
+        if: steps.rebase_guard.outputs.skip != 'true'
         uses: Codium-ai/pr-agent@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -26,7 +69,7 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.PR_AGENT_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
           config.model: "gemini/gemini-flash-latest"
           config.custom_model_max_tokens: "1000000"
-          config.fallback_models: '["gemini/gemini-3.5-flash", "gemini/gemini-3.8-flash"]'
+          config.fallback_models: '["gemini/gemini-2.5-flash", "gemini/gemini-3.5-flash"]'
           GOOGLE_GENAI_USE_VERTEXAI: "FALSE"
           github_action_config.pr_actions: "['opened', 'synchronize', 'reopened', 'ready_for_review']"
           github_action_config.auto_review: "true"
@@ -42,13 +85,13 @@ jobs:
           pr_code_suggestions.commitable_code_suggestions: "true"
 
       - name: Sync Review Status (Request Changes or Approve)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.rebase_guard.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           echo "Syncing PR-Agent review status on PR #${PR_NUMBER}..."
-          
+
           # 1. Record evaluated HEAD commit SHA before reading review state
           HEAD_SHA=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid 2>/dev/null || echo "")
           if [ -z "$HEAD_SHA" ]; then
@@ -56,25 +99,37 @@ jobs:
             exit 1
           fi
           echo "Evaluated HEAD commit: ${HEAD_SHA}"
-          
-          # 2. Fetch all comment pages, find latest PR-Agent review comment ID, and read its body
-          LAST_COMMENT_ID=$(gh api --paginate "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("pr-agent-review-state"))) | .id' | tail -n 1)
-          
+
+          # 2. Fetch all comment pages, find latest PR-Agent review comment ID (including clean reviews)
+          LAST_COMMENT_ID=$(gh api --paginate "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and ((.body | contains("pr-agent-review-state")) or (.body | contains("<!-- pr-agent:review:full -->")) or (.body | contains("PR Reviewer Guide")))) | .id' \
+            | tail -n 1)
+
           if [ -z "$LAST_COMMENT_ID" ]; then
             echo "⚠️ No PR-Agent review comment found. Skipping review synchronization."
             exit 0
           fi
-          
+
           LATEST_COMMENT=$(gh api "repos/${{ github.repository }}/issues/comments/${LAST_COMMENT_ID}" --jq .body)
-          
+
           # 3. Extract JSON review-state payload if present
           JSON_PAYLOAD=$(echo "$LATEST_COMMENT" | sed -n '/<!-- pr-agent-review-state:v1/,/-->/p' | sed '1d;$d')
-          
+
           # 4. Fetch latest review state by github-actions[bot] across all pages
-          LATEST_STATE=$(gh api --paginate "repos/${{ github.repository }}/pulls/${PR_NUMBER}/reviews" --jq '.[] | select(.user.login == "github-actions[bot]") | .state' | tail -n 1)
+          LATEST_STATE=$(gh api --paginate "repos/${{ github.repository }}/pulls/${PR_NUMBER}/reviews" \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | .state' | tail -n 1)
           echo "Latest Review State: ${LATEST_STATE:-none}"
-          
-          # 5. Evaluate review verdict with strict affirmative checks
+
+          # 5. Bind review evaluation to last_run.head_sha when review-state JSON is present
+          if [ -n "$JSON_PAYLOAD" ] && echo "$JSON_PAYLOAD" | jq -e . >/dev/null 2>&1; then
+            LAST_RUN_SHA=$(echo "$JSON_PAYLOAD" | jq -r '.last_run.head_sha // empty' 2>/dev/null || echo "")
+            if [ -n "$LAST_RUN_SHA" ] && [ "$LAST_RUN_SHA" != "$HEAD_SHA" ]; then
+              echo "⚠️ Review state last_run.head_sha (${LAST_RUN_SHA}) does not match HEAD (${HEAD_SHA}). Skipping stale review synchronization."
+              exit 0
+            fi
+          fi
+
+          # 6. Evaluate review verdict with strict affirmative checks
           REQUEST_CHANGES=false
           if echo "$LATEST_COMMENT" | grep -Eqi "Require changes|Risk level</strong>:\s*(High|Critical)"; then
             REQUEST_CHANGES=true
@@ -90,21 +145,27 @@ jobs:
               echo "⚠️ Failed to evaluate active findings count from review state payload."
               exit 0
             fi
+          elif echo "$LATEST_COMMENT" | grep -Eqi "<!-- pr-agent:review:full -->|PR Reviewer Guide"; then
+            if echo "$LATEST_COMMENT" | grep -Eqi "Key issues to review|Recommended focus areas"; then
+              echo "⚠️ Review comment lists focus areas without structured review-state payload. Skipping automated approval."
+              exit 0
+            fi
+            REQUEST_CHANGES=false
           else
             echo "⚠️ Review evidence is ambiguous or unverified. Skipping automated review submission."
             exit 0
           fi
-          
+
           echo "Verdict - Request Changes: ${REQUEST_CHANGES}"
-          
-          # 6. Verify PR head commit hasn't moved during review execution
+
+          # 7. Verify PR head commit hasn't moved during review execution
           CURRENT_HEAD=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid 2>/dev/null || echo "")
           if [ "$CURRENT_HEAD" != "$HEAD_SHA" ]; then
             echo "⚠️ PR HEAD commit moved from ${HEAD_SHA} to ${CURRENT_HEAD}. Skipping review submission on stale commit."
             exit 0
           fi
-          
-          # 7. Submit review bound to the exact evaluated commit_id
+
+          # 8. Submit review bound to the exact evaluated commit_id
           if [ "$REQUEST_CHANGES" = "true" ]; then
             if [ "$LATEST_STATE" != "CHANGES_REQUESTED" ]; then
               echo "Active findings identified. Submitting Changes Requested review bound to ${HEAD_SHA}..."

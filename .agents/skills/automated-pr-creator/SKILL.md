@@ -49,13 +49,26 @@ Whenever you complete a task or are instructed to create, open, or draft a Pull 
    ```
    *(or `node scripts/capture-pr-evidence.mjs`)*
 2. The runner dynamically inspects `git diff` for modified UI files:
-   - **If UI/Visual files were modified**: Playwright captures targeted screenshots of the affected route/component, saves them into `.github/pr-evidence/`, and returns the formatted markdown table.
-   - **If Backend/Logic files only**: Outputs `| Backend / Logic change | *N/A (No frontend or visual UI files modified)* |`.
-3. If new screenshots were generated in `.github/pr-evidence/`, stage them:
+   - **If UI/Visual files were modified**: Playwright captures targeted screenshots of the affected route/component and saves them into `.github/pr-evidence/`.
+   - **If Backend/Logic files only**: Use `| Backend / Logic change | *N/A (No frontend or visual UI files modified)* |`.
+3. If new screenshots were generated in `.github/pr-evidence/`, **commit them BEFORE building the PR body**:
    ```bash
    git add .github/pr-evidence/
    git commit -m "chore(evidence): capture visual proof for PR" || true
    ```
+4. **Mandatory Image Formatting & Immutable Raw URL Rule (ALWAYS apply automatically):**
+   - GitHub PR descriptions do **NOT** resolve relative paths (`![alt](.github/pr-evidence/...)` → broken 404).
+   - Branch-based raw URLs break with 404 as soon as the PR branch is deleted on merge.
+   - **After Step 3.3 commits the screenshots**, resolve the exact repo slug and post-commit 40-char SHA:
+     ```bash
+     REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+     SHA=$(git rev-parse HEAD)
+     ```
+   - Format **every** screenshot cell in the `## Visual Evidence` markdown table using this exact HTML `<img>` tag (never relative markdown links):
+     ```html
+     <img src="https://raw.githubusercontent.com/<REPO>/<SHA>/.github/pr-evidence/<filename>.png" alt="<Short description>" width="650" />
+     ```
+   - Verify the `<filename>.png` exists in that commit (`git show --stat HEAD`) and remember that Step 6 pushes the branch **before** `gh pr create` so GitHub renders the image immediately upon PR creation.
 
 ---
 

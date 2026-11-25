@@ -58,6 +58,7 @@ function App() {
 
         {/* LAZY ZONE: Loaded in background */}
         <Suspense fallback={<SectionLoader />}>
+          {/* Announcements positioned directly before Services per FMMS-1 */}
           <section id="announcements" className="section">
             <Announcements />
           </section>
